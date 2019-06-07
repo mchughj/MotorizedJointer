@@ -1,6 +1,7 @@
 # MotorizedJointer
 
 <img src="/Photos/Final.jpg" />
+(Yes, wire management is not my strong suit.  But it works!)
 
 This is a project which I started in 2017 after seeing a YouTube video on something similar.  
 
