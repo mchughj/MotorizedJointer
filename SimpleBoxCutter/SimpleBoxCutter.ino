@@ -112,6 +112,9 @@
 // Default kerf size of blade
 uint16_t kerf = 123;
 
+// Default movement can be less than the kerf of the blade if you want overlapping cuts.
+uint16_t maxAdvance = 120;
+
 uint16_t slot = 500;
 uint16_t slop = 2;
 
@@ -128,8 +131,9 @@ uint16_t distanceRemainingToMove = 0;
 // to wait inbetween low and high pulses.  A larger number indicates slower speed.
 uint16_t motorSpeed = 100;
 
-uint32_t lengthOfWood = 0;
-uint16_t numberOfSlots = 0;
+// Default length of wood and number of slots.
+uint32_t lengthOfWood = 4000;
+uint16_t numberOfSlots = 6;
 
 // Initiali the LCD.  Pin numbers in the below match the earlier comments.
 LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
@@ -271,6 +275,19 @@ void drawThumbUp() {
 
 void writeSettings() {
   uint8_t kerfInByte = (uint8_t) kerf;
+
+  Serial.print( "going to writeSettings; kerf: ");
+  Serial.print(kerf);
+  Serial.print( ", motorSpeed: ");
+  Serial.print(motorSpeed);
+  Serial.print( ", slop: ");
+  Serial.print(slop);
+  Serial.print( ", lengthOfWood: ");
+  Serial.print(lengthOfWood);
+  Serial.print( ", numberOfSlots: ");
+  Serial.print(numberOfSlots);
+  Serial.print( ", maxAdvance: ");
+  Serial.println(maxAdvance);
   
   EEPROM.write(0, byte(215));
   EEPROM.write(1, byte(kerf));
@@ -279,13 +296,15 @@ void writeSettings() {
   EEPROM.write(4, byte(slop / 256));
   EEPROM.write(5, byte(slop % 256));
 
-  EEPROM.write(6, byte((lengthOfWood >> 16) / 256));
-  EEPROM.write(7, byte((lengthOfWood >> 16 ) % 256));
-  EEPROM.write(8, byte((lengthOfWood && 0xFFFF) / 256));
-  EEPROM.write(9, byte((lengthOfWood && 0xFFFF) % 256));
+  EEPROM.put(6, lengthOfWood);
+
+  Serial.print("sizeof(lengthOfWood): ");
+  Serial.println(sizeof(lengthOfWood));
 
   EEPROM.write(10, byte(numberOfSlots / 256));
   EEPROM.write(11, byte(numberOfSlots % 256));
+
+  EEPROM.write(12, byte(maxAdvance));
 
   lcd.setCursor(1, 1);
   lcd.print("Saved settings");
@@ -316,11 +335,25 @@ void readSettings() {
   motorSpeed = (EEPROM.read(2) * 256) + EEPROM.read(3);
   slop = (EEPROM.read(4) * 256) + EEPROM.read(5);
 
-  lengthOfWood = ((EEPROM.read(6) * 256) + EEPROM.read(7));
-  lengthOfWood = lengthOfWood << 16;
-  lengthOfWood = lengthOfWood + ((EEPROM.read(8) * 256) + EEPROM.read(9) );
+  EEPROM.get(6, lengthOfWood);
 
   numberOfSlots = (EEPROM.read(10) * 256) + EEPROM.read(11);
+
+  byte maxAdvanceByte = EEPROM.read(12);
+  maxAdvance = maxAdvanceByte;
+
+  Serial.print( "read in the settings; kerf: ");
+  Serial.print(kerf);
+  Serial.print( ", motorSpeed: ");
+  Serial.print(motorSpeed);
+  Serial.print( ", slop: ");
+  Serial.print(slop);
+  Serial.print( ", lengthOfWood: ");
+  Serial.print(lengthOfWood);
+  Serial.print( ", numberOfSlots: ");
+  Serial.print(numberOfSlots);
+  Serial.print( ", maxAdvance: ");
+  Serial.println(maxAdvance);
 }
 
 void setup() {
@@ -348,6 +381,7 @@ void setup() {
   if (EEPROM.read(0) != 215 || isUpButtonPressed()) { 
     Serial.println("Writing configuration setup");
     writeSettings(); 
+    readSettings();
   } else {
     Serial.println("Reading configuration setup");
     readSettings();
@@ -356,7 +390,7 @@ void setup() {
   Serial.println("Done with setup");
 }
 
-void showOptions( const char *left, const char *bottom, const char *right = NULL, const char *top = NULL, const int startLine = 1) { 
+void showOptions(const char *left, const char *bottom, const char *right = NULL, const char *top = NULL, const int startLine = 1) { 
   char statusMessage[14];
 
   if( top ) { 
@@ -470,11 +504,12 @@ void showMoveMenu() {
   } 
 }
 
-#define MAX_CONFIG_OPTIONS 5
+#define MAX_CONFIG_OPTIONS 6
 int configOption = 0;
 const char *configOptions[MAX_CONFIG_OPTIONS] = {
    "Slop",
    "Kerf",
+   "MaxAdvance",
 
    // There are two ways to set the size of each of the finger. 
    // 
@@ -555,7 +590,13 @@ void showConfigChangeMenu() {
     } else if( configOption == 1) { 
       len = snprintf(statusMessage, 20, "Kerf: %d", kerf);   
     } else if( configOption == 2 ) { 
+      len = snprintf(statusMessage, 20, "MaxAdvance: %d", maxAdvance);   
+    } else if( configOption == 3 ) { 
       len = snprintf(statusMessage, 20, "Slot Size: %d", slot);   
+    } else if( configOption == 4 ) { 
+      len = snprintf(statusMessage, 20, "Length: %d", lengthOfWood);   
+    } else if( configOption == 5 ) { 
+      len = snprintf(statusMessage, 20, "NumSlots: %d", numberOfSlots);   
     }
     lcd.setCursor((int)(20-len)/2, 0);
     lcd.print(statusMessage);
@@ -565,7 +606,7 @@ void showConfigChangeMenu() {
     // We don't wait for the button up when we are modifying the values that
     // we expect to be very large.  This allows us to zoom around in setting
     // the value.
-    if (configOption != 3 ) { 
+    if (configOption != 4 ) { 
        waitForUpButtonRelease();
     }
     if( configOption == 0 ) { 
@@ -573,11 +614,13 @@ void showConfigChangeMenu() {
     } else if ( configOption == 1 ) { 
       kerf = kerf + 1;
     } else if ( configOption == 2 ) { 
-      slot = slot + 1;
+      maxAdvance = maxAdvance + 1;
     } else if ( configOption == 3 ) { 
+      slot = slot + 1;
+    } else if ( configOption == 4 ) { 
       lengthOfWood = lengthOfWood + 1;
       recalculateSlotSize();
-    } else if ( configOption == 4 ) { 
+    } else if ( configOption == 5 ) { 
       numberOfSlots = numberOfSlots + 1;
       recalculateSlotSize();
     }
@@ -592,7 +635,7 @@ void showConfigChangeMenu() {
     // We don't wait for the button to be released when we are modifying the
     // values that we expect to be very large.  This allows us to zoom around
     // in setting the value.
-    if( configOption != 3 ) { 
+    if( configOption != 4 ) { 
        waitForDownButtonRelease();
     }
     if( configOption == 0 ) { 
@@ -600,11 +643,13 @@ void showConfigChangeMenu() {
     } else if ( configOption == 1 ) { 
       kerf = kerf - 1;
     } else if ( configOption == 2 ) { 
-      slot = slot - 1;
+      maxAdvance = maxAdvance - 1;
     } else if ( configOption == 3 ) { 
+      slot = slot - 1;
+    } else if ( configOption == 4 ) { 
       lengthOfWood = lengthOfWood - 1;
       recalculateSlotSize();
-    } else if ( configOption == 4 ) { 
+    } else if ( configOption == 5 ) { 
       numberOfSlots = numberOfSlots - 1;
       recalculateSlotSize();
     }
@@ -626,10 +671,12 @@ uint16_t d() {
   Serial.print( ", distanceRemainingToMove: ");
   Serial.print( distanceRemainingToMove );
   Serial.print( ", kerf: " );
-  Serial.println( kerf );
-  if (distanceRemainingToCut > kerf) { 
+  Serial.print( kerf );
+  Serial.print( ", maxAdvance: " );
+  Serial.println( maxAdvance );
+  if (distanceRemainingToCut > maxAdvance) { 
     Serial.println("Returning Kerf" );
-    return kerf;
+    return maxAdvance;
   } else {
     Serial.println("Less to cut!  Returning distanceRemainingToCut!" );
     return distanceRemainingToCut;
