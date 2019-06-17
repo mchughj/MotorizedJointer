@@ -59,17 +59,21 @@
 // There are 2 values in use when you are doing a pair of Finger and Valley. 
 // The first is how much to cut - this is the size of the valley.  The second
 // is the amount to move giving you the size of the finger.
-// The finger needs to be smaller than the valley by just a little bit.
-// The value is determined by the slop setting.  
+// The valley needs to be larger than the finger by just a little bit.
+// If they were the exact same size then the tightness would be too high.  
+// Depending on the material and the characteristics of the cutting, a few
+// thousands of an inch should be sufficient.  This parameter (the additional
+// thousandths of an inch to cut to allow ease of mating) is called 'slop'.
 //
-// All measurements are in thousandths of an inch.  So 500 is 0.5 inches.
+// The units for all variables that are capturing distance are in thousandths
+// of an inch.  So 500 is 0.5 inches.
 
 // The menu on the device talks about "Positive" and "Inverse" for the two
 // mating pieces of wood. 
 // 
 //  When "Positive" then isCutFirst = True - which means we cut then move:
-//    distanceRemainingToCut = initialDistanceToCut;
-//    distanceRemainingToMove = distanceToMove;
+//    distanceRemainingToCut = initialDTMValley;
+//    distanceRemainingToMove = subDTMFinger;
 //
 //  Thus the start looks like this:
 //         +---+
@@ -79,7 +83,7 @@
 //
 //  When "Inverse" then isCutFirst = False - which means that we just move:
 //    distanceRemainingToCut = 0;
-//    distanceRemainingToMove = initialDistanceToMove;
+//    distanceRemainingToMove = initialDTMFinger;
 // 
 //  Thus the start looks like this:
 //     +---+
@@ -87,10 +91,77 @@
 //     +   +---+
 //
 
-//    initialDistanceToCut = slot + (slop);  
-//    initialDistanceToMove = slot - (slop + slop) + kerf;  
-//    distanceToCut = slot + (slop + slop) - kerf;
-//    distanceToMove = slot - (slop + slop) + kerf;
+// The jig is operated by the following steps:
+//   1/  Push the jig forward, then back.
+//   2/  Hit the next button on the jig.
+//   3/  Repeate until you are past the end of the board.
+//  
+// This keeps the process repeatable and simple.  But it also complicates the
+// software as we need to get the movement and cut values correct given that
+// there are two situations.  his is because on the very first finger/valley
+// the blade is to the left of where the wood is.  To start the wood is put flush
+// against the blade and, when we push the jig through the blade (step #1),
+// empty air is cut.  The setup looks like this:
+//
+//  
+//            B                             ^      
+//            L                             |
+//            A                             |
+//       ----+D                        Human Pushes
+//           |E                          the jig
+//           |                              |
+//           |                              |
+//
+//   -> Stepper movement ->
+//
+
+// This requires the 'initial' finger/valley to differ from all others because
+// the kerf distance needs to be taken into account.
+//
+// For the first finger/valley, the variables 'initialDTMFinger' or
+// 'initialDTMValley' are used.  DTM stands for 'distance to move'.  
+//
+//    initialDTMValley  =  slot     +  slop         +  0;  
+//    initialDTMFinger  =  slot     +  -slop        +  kerf;  
+//
+// Because step #1 doesn't actually do anything the initial distance to cut
+// includes the full slot and slop.  The zero term there will make sense once
+// you see the subDTMValley for non-initial finger/valleys.
+//
+// The initialDTMFinger is offset by the kerf term in order to position
+// the cutter inside of the wood for the next step.
+
+// 
+// After that first initial finger & valley in all cases the blade is ready 
+// to pass through material into the valley of the second and all subsequent
+// joints.  This is because when doing an inverse cut we don't do anything but
+// move to the starting point of the first valley.  When doing positive then
+// we cut and then do a big move.  In both cases we are ready to pass the
+// material through the blade as part of the subsequent valley.
+//
+// In this case the setup looks like this:
+//  
+//                -> Stepper movement ->
+// 
+//            B                           B              
+//            L                           L                      ^ 
+//            A                           A                      | 
+//            D                           D                      | 
+//            E              OR           E                 Human Pushes
+//      +--------                   +-----------              the jig
+//      |                           |                            |
+//      |                           |                            |
+//  +---+                           |             
+//  |                               |         
+//   
+//
+//  Now step #1 will not cut empty air.  It will cut a kerf amount of wood.  
+//  
+//    subDTMValley  = slot     +  slop         -  kerf;  
+//    subDTMFinger  = slot     +  -slop        +  kerf;
+// 
+//  The term 'sub' is short for subsequent.
+
  
 #include <LiquidCrystal.h>
 #include <EEPROM.h>   
@@ -119,10 +190,10 @@ uint16_t slot = 500;
 uint16_t slop = 2;
 
 // Computed based on the current options.  Set in determineMovementValues.
-uint16_t initialDistanceToCut;
-uint16_t initialDistanceToMove;
-uint16_t distanceToCut;
-uint16_t distanceToMove;
+uint16_t initialDTMValley;
+uint16_t initialDTMFinger;
+uint16_t subDTMValley;
+uint16_t subDTMFinger;
 
 uint16_t distanceRemainingToCut = 0;
 uint16_t distanceRemainingToMove = 0;
@@ -181,7 +252,7 @@ void waitForButtonRelease(uint8_t pin) {
   while( digitalRead(pin) == LOW ) { 
     delay(1);
   }
-  delay(50);
+  delay(40);
 }
 void waitForLeftButtonRelease() {
   waitForButtonRelease(BUTTON_LEFT_PIN);
@@ -308,25 +379,23 @@ void writeSettings() {
 
   lcd.setCursor(1, 1);
   lcd.print("Saved settings");
-  delay(5000);
+  delay(3000);
 
   determineMovementValues(slot);
 }
 
 void determineMovementValues( uint16_t slotSize ) {
-  // The 'Initial' values here are for the first finger-valley or
-  // valley-finger on the wood.  The blade always starts adjacent to the wood
-  // with the first movement of 'kerf' distance being a move that would cut
-  // off 'kerf' from the edge of the wood (if it were a valley).  
+  // See comments at the top of the file.
 
-  // The initial distance to cut is smaller, by a single slop setting, because
-  // the valley is adjacent to empty space.
-  initialDistanceToCut = slotSize + (slop);  
-  initialDistanceToMove = slotSize - (slop + slop) + kerf; 
+  // TODO:  Next version of this software should call this method for each
+  // finger/valley.  Then we can vary slotsize.
+  initialDTMValley  =  slotSize     +  slop    + 0;  
+  initialDTMFinger  =  slotSize     + -slop    + kerf; 
 
-  distanceToCut = slotSize + (slop + slop) - kerf;
-  distanceToMove = slotSize - (slop + slop) + kerf;
+  subDTMValley      =  slotSize     +  slop    + -kerf;
+  subDTMFinger      =  slotSize     + -slop    + kerf;
 }
+
 
 void readSettings() {
   byte kerfByte = EEPROM.read(1);
@@ -403,9 +472,6 @@ void showOptions(const char *left, const char *bottom, const char *right = NULL,
   }
   if( right ) {
     showRightAligned(right, startLine+1);
-    int len = snprintf(statusMessage, 14, "%s", right);
-    lcd.setCursor(20-len, startLine+1);
-    lcd.print(statusMessage);
   }
   if( bottom ) {
     showCentered(bottom, startLine+2);
@@ -423,11 +489,11 @@ void setupForCut( bool cutFirst ) {
   motorOn();
   
   if( isCutFirst ) { 
-    distanceRemainingToCut = initialDistanceToCut;
-    distanceRemainingToMove = distanceToMove;
+    distanceRemainingToCut = initialDTMValley;
+    distanceRemainingToMove = subDTMFinger;
   } else {
     distanceRemainingToCut = 0;
-    distanceRemainingToMove = initialDistanceToMove;
+    distanceRemainingToMove = initialDTMFinger;
   }
 }
 
@@ -440,12 +506,8 @@ void showMainMenu() {
     const char fingerprint[] = __DATE__;
   
     lcd.clear();
-    int len = snprintf(statusMessage, 20, "Box Jointer");
-    lcd.setCursor((int)(20-len)/2, 0);
-    lcd.print(statusMessage);
-    len = snprintf(statusMessage, 20, "%s", fingerprint);
-    lcd.setCursor((int)(20-len)/2, 1);
-    lcd.print(statusMessage);
+    showCentered("Box Jointer", 0);
+    showCentered(fingerprint, 1);
 
     showOptions( "Config",  /* Left   */
        "Pos",               /* Bottom */
@@ -454,7 +516,7 @@ void showMainMenu() {
        1 );
   }
 
-  if (isLeftButtonPressed()) {   /* Config */
+  if (isLeftButtonPressed()) {          /* Config */
     state = 3;
     waitForLeftButtonRelease();
     refreshDisplay = true;
@@ -474,7 +536,7 @@ void showMainMenu() {
 void showCentered(const char *s, int line) {
   char m[20];
   int len = snprintf(m, 20, "%s", s);
-  lcd.setCursor( (int) ((20 - len) / 2), line);
+  lcd.setCursor((20 - len) / 2, line);
   lcd.print(m);
 }
 
@@ -584,28 +646,26 @@ void showConfigChangeMenu() {
     char statusMessage[20];
  
     lcd.clear();
-    int len;
     if( configOption == 0 ) { 
-      len = snprintf(statusMessage, 20, "Slop: %d", slop);
+      snprintf(statusMessage, 20, "Slop: %d", slop);
     } else if( configOption == 1) { 
-      len = snprintf(statusMessage, 20, "Kerf: %d", kerf);   
+      snprintf(statusMessage, 20, "Kerf: %d", kerf);   
     } else if( configOption == 2 ) { 
-      len = snprintf(statusMessage, 20, "MaxAdvance: %d", maxAdvance);   
+      snprintf(statusMessage, 20, "MaxAdvance: %d", maxAdvance);   
     } else if( configOption == 3 ) { 
-      len = snprintf(statusMessage, 20, "Slot Size: %d", slot);   
+      snprintf(statusMessage, 20, "Slot Size: %d", slot);   
     } else if( configOption == 4 ) { 
-      len = snprintf(statusMessage, 20, "Length: %d", lengthOfWood);   
+      snprintf(statusMessage, 20, "Length: %d", lengthOfWood);   
     } else if( configOption == 5 ) { 
-      len = snprintf(statusMessage, 20, "NumSlots: %d", numberOfSlots);   
+      snprintf(statusMessage, 20, "NumSlots: %d", numberOfSlots);   
     }
-    lcd.setCursor((int)(20-len)/2, 0);
-    lcd.print(statusMessage);
+    showCentered(statusMessage, 0);
     showOptions( "Back", "Down", "Cancel", "Up" );
   }
   if (isUpButtonPressed()) {
     // We don't wait for the button up when we are modifying the values that
-    // we expect to be very large.  This allows us to zoom around in setting
-    // the value.
+    // we expect to be very large.  This allows us to move quickly around in
+    // setting the value between large distances.
     if (configOption != 4 ) { 
        waitForUpButtonRelease();
     }
@@ -657,8 +717,8 @@ void showConfigChangeMenu() {
   } else if (isRightButtonPressed()) { 
     waitForRightButtonRelease();
     lcd.setCursor(1, 1);
-    lcd.print("  CANCELED     ");
-    delay(2000);
+    lcd.print("   CANCELED    ");
+    delay(1000);
     state = 3;
     refreshDisplay = true;
   }
@@ -695,10 +755,10 @@ void showCutMenu() {
     if (distanceRemainingToCut == 0) { 
       lcd.setCursor(5, 1);
       lcd.print("*");
-    } else if ( distanceRemainingToCut < distanceToCut / 3 ) { 
+    } else if ( distanceRemainingToCut < subDTMValley / 3 ) { 
       lcd.setCursor(3, 1);
       lcd.print("^");
-    } else if ( distanceRemainingToCut < ( 2*distanceToCut / 3) ) { 
+    } else if ( distanceRemainingToCut < ( 2*subDTMValley / 3) ) { 
       lcd.setCursor(2, 1);
       lcd.print("^");
     } else {
@@ -707,13 +767,13 @@ void showCutMenu() {
     }
     if( distanceRemainingToCut > 0 ) { 
       char statusMessage[10];
-      snprintf(statusMessage, 10, "X %d %d", (int)(distanceRemainingToCut), (int)(distanceToCut) );
-      lcd.setCursor((int)(20-10), 0);
+      snprintf(statusMessage, 10, "X %d %d", (int)(distanceRemainingToCut), (int)(subDTMValley) );
+      lcd.setCursor(10, 0);
       lcd.print(statusMessage);
     } else {
       char statusMessage[10];
       snprintf(statusMessage, 10, "-> %d", (int)(distanceRemainingToMove) );
-      lcd.setCursor((int)(20-10), 0);
+      lcd.setCursor(10, 0);
       lcd.print(statusMessage);
     }
  
@@ -729,8 +789,8 @@ void showCutMenu() {
       Serial.print( "At cusp of next - moving forward big: "); 
       Serial.println(distanceRemainingToMove);
       moveStepper(distanceRemainingToMove, 1);
-      distanceRemainingToCut = distanceToCut;
-      distanceRemainingToMove = distanceToMove;
+      distanceRemainingToCut = subDTMValley;
+      distanceRemainingToMove = subDTMFinger;
       Serial.print( "Done;  new distanceRemainingToCut: "); 
       Serial.println(distanceRemainingToCut);
     } else {  
