@@ -31,72 +31,101 @@
 //   10 - Direction
 //
 
+
+// --------------------------------------------------------------------------
+// Understanding the finger & valley goodness
+// --------------------------------------------------------------------------
+
+// This documentation is broken up into three sections where each 
+// subsequent section builds on the prior and introduces some complexity
+// that was glossed over in the prior section.  This aids in understanding
+// what is happening into smaller sized chunks.
+//
+// Section 1:  Fingers & Valleys
+// Section 2:  Initial cuts versus subsequent cuts
+// Section 3:  Non-uniform sized cuts
+
+
+// --------------------------------------------------------------------------
+// Section 1:  Fingers & Valleys
+// --------------------------------------------------------------------------
+
 //
 //  The Finger Joints look like this:
 //
-//        "Inverse"              "Positive"
+//        "Negative"              "Positive"
 //    isCutFirst = False     isCutFirst = True
-//    +-----------------+    +---------------+
-//    |                 |    |               |
-//    |                 |    |               |
-//    |     Wood        |    |               |
-//    |                 |    |               |
-//    |         +-------+    |               |
-//    |         |    +-------+               |
-//    |         |    |                       |
-//    |         |    |            Wood       |
-//    |         |    |                       |
-//    |         |    +-------+               |
-//    |         +-------+    |               |
-//    |                 |    |               |
+//    +------------------+    +---------------+
+//    |     WOOD         |    |     WOOD      |
+//    |                  |    |               |
+//    |    [Finger]      |    |   [Valley]    |
+//    |                  |    |               |
+//    |          +-------+    |               |
+//    |          |    +-------+               |
+//    |          |    |                       |
+//    | [Valley] |    |           [Finger]    |
+//    |          |    |                       |
+//    |          |    +-------+               |
+//    |          +-------+    |               |
+//    |                  |    |               |
 //        ... 
 //
 // There are 2 values in use when you are doing a pair of Finger and Valley. 
 // The first is how much to cut - this is the size of the valley.  The second
 // is the amount to move giving you the size of the finger.
 // The valley needs to be larger than the finger by just a little bit.
-// If they were the exact same size then the tightness would be too high.  
+// If they were the exact same size then they would be too tight. 
 // Depending on the material and the characteristics of the cutting, a few
 // thousands of an inch should be sufficient.  This parameter (the additional
-// thousandths of an inch to cut to allow ease of mating) is called 'slop'.
+// thousandths of an inch to cut to allow them to fit) is called 'slop'.
 //
 // The units for all variables that are capturing distance are in thousandths
 // of an inch.  So 500 is 0.5 inches.
 
-// The menu on the device talks about "Positive" and "Inverse" for the two
+// The menu on the device talks about "Positive" and "Negative" for the two
 // mating pieces of wood. 
 // 
 //  When "Positive" then isCutFirst = True - which means we cut then move:
 //    distanceRemainingToCut = initialDTMValley;
 //    distanceRemainingToMove = subDTMFinger;
 //
-//  Thus the start looks like this:
-//         +---+
-//         |
-//     +---+
 
 //
-//  When "Inverse" then isCutFirst = False - which means that we just move:
+//  When "Negative" then isCutFirst = False - which means that we just move:
 //    distanceRemainingToCut = 0;
 //    distanceRemainingToMove = initialDTMFinger;
-// 
-//  Thus the start looks like this:
-//     +---+
-//     |   |
-//     +   +---+
+//
+
+
+
+// --------------------------------------------------------------------------
+// Section 2:  Initial cuts versus subsequent cuts
+// --------------------------------------------------------------------------
+
+// Positive and negative cuts are all good but how do we make the entire
+// process repeatable given that we don't want to create an initial setup 
+// that is simple and doesn't require any guess work on where to start?
 //
 
 // The jig is operated by the following steps:
-//   1/  Push the jig forward, then back.
-//   2/  Hit the next button on the jig.
-//   3/  Repeate until you are past the end of the board.
+//   0/  Clamp the wood into the gantry.  Make sure it is flush and square.
+//   1/  Move the gantry (not the wood) so that the wood is flush against 
+//       the table saw.
+//   2/  Select the cut type, turn on the table saw.
+// 
+//   3/  Push the jig forward, then back.
+//   4/  Hit the next button (on the right) on the jig.
+//   5/  Goto step 2.
 //  
-// This keeps the process repeatable and simple.  But it also complicates the
-// software as we need to get the movement and cut values correct given that
-// there are two situations.  his is because on the very first finger/valley
-// the blade is to the left of where the wood is.  To start the wood is put flush
-// against the blade and, when we push the jig through the blade (step #1),
-// empty air is cut.  The setup looks like this:
+// This keeps the process simple and repeatable.  Two important characteristics
+// when moving wood over-and-over through a spinning blade!!
+// 
+
+// But this also complicates the software as we need to get the movement and
+// cut values correct given that there are two situations.  This is because on
+// the very first finger/valley the blade is to the left of where the wood is.
+// To start the wood is put flush against the blade and, when we push the jig
+// through the blade (step #3), empty air is cut.  The setup looks like this:
 //
 //  
 //            B                             ^      
@@ -108,31 +137,36 @@
 //           |                              |
 //
 //   -> Stepper movement ->
+// 
+// When you push the jig forward, and move the blade through the wood, 
+// no wood is actually cut since the initial setup has the blade flush against
+// the wood.
 //
 
-// This requires the 'initial' finger/valley to differ from all others because
-// the kerf distance needs to be taken into account.
+// This requires the 'initial' finger (or valley) to differ from all others
+// because the kerf distance needs to be taken into account.
 //
 // For the first finger/valley, the variables 'initialDTMFinger' or
 // 'initialDTMValley' are used.  DTM stands for 'distance to move'.  
 //
-//    initialDTMValley  =  slot     +  slop         +  0;  
-//    initialDTMFinger  =  slot     +  -slop        +  kerf;  
+//    initialDTMValley  =  valleySize     +  slop         +  0;  
+//    initialDTMFinger  =  fingerSize     +  -slop        +  kerf;  
 //
-// Because step #1 doesn't actually do anything the initial distance to cut
-// includes the full slot and slop.  The zero term there will make sense once
-// you see the subDTMValley for non-initial finger/valleys.
+// Because step #3 doesn't actually do anything (you cut empty air the first
+// time) the initial distance to cut includes the full slot and slop.  The zero
+// term there will make sense once you see the subDTMValley for non-initial
+// finger/valleys.
 //
 // The initialDTMFinger is offset by the kerf term in order to position
 // the cutter inside of the wood for the next step.
 
 // 
-// After that first initial finger & valley in all cases the blade is ready 
-// to pass through material into the valley of the second and all subsequent
-// joints.  This is because when doing an inverse cut we don't do anything but
-// move to the starting point of the first valley.  When doing positive then
-// we cut and then do a big move.  In both cases we are ready to pass the
-// material through the blade as part of the subsequent valley.
+// After that first initial finger or valley the blade is ready to pass through
+// material into the valley of the second and all subsequent joints.  This is
+// because when doing a negative cut we don't do anything but move to the
+// starting point of the first valley.  When doing positive then we cut and
+// then do a big move.  In both cases we are ready to pass the material through
+// the blade as part of the subsequent valley.
 //
 // In this case the setup looks like this:
 //  
@@ -150,12 +184,91 @@
 //  |                               |         
 //   
 //
-//  Now step #1 will not cut empty air.  It will cut a kerf amount of wood.  
+// Now step #3 will *not* cut empty air.  It will cut a kerf amount of wood.  
+// Therefore all subsequent valley and finger distance to moves are 
+// defined by:
 //  
-//    subDTMValley  = slot     +  slop         -  kerf;  
-//    subDTMFinger  = slot     +  -slop        +  kerf;
+//    subDTMValley  = valleySize     +  slop         -  kerf;  
+//    subDTMFinger  = fingerSize     +  -slop        +  kerf;
 // 
-//  The term 'sub' is short for subsequent.
+// The term 'sub' is short for subsequent which captures all fingers and
+// valleys after the first.
+
+
+// --------------------------------------------------------------------------
+// Section 3:  Non-uniform sized cuts
+// --------------------------------------------------------------------------
+//
+// Final complication!  When you are doing the same sized fingers and 
+// valleys then the process is simple.  When doing variable sized fingers
+// and valleys the conceptual is still the same but the details are a
+// bit more tricky.  
+//                                              
+// When doing the programmatic cut you set the individual stop points for
+// each of the fingers or valleys.  Whether the stop point represents a 
+// finger or valley depends upon whether you are doing the positive or
+// negative piece.
+//
+// The numeric values shown below are the thous that have been set up 
+// while programming.  
+// 
+//        Negative              Positive
+//    +-----------------+    +---------------+
+//    |                 |    |               |
+//    | 200             |    |    200        |
+//    |     Wood        |    |               |
+//    |                 |    |               |
+//    |         +-------+    |               |
+//    |         |    +-------+               |
+//    | 300     |    |                       |
+//    |         |    |            300        |
+//    |         |    |                       |
+//    |         |    +-------+               |
+//    |         +-------+    |               |
+//    |                 |    |               |
+//    |                 |    |               |
+//    |                 |    |               |
+//    | 450             |    |   450         |
+//    |                 |    |               |
+//    |                 |    |               |
+//    |         +-------+    |               |
+//    |         |    +-------+               |
+//    | 300     |    |                       |
+//    |         |    |           300         |
+//    |         |    |                       |
+//    |         |    +-------+               |
+//    |         +-------+    |               |
+//    |                 |    |               |
+//    |                 |    |               |
+//    | 200             |    |   200         |
+//    |                 |    |               |
+//    +-----------------+    +---------------+
+// 
+// In the example above the programmaticSlots would look like:
+//  programmaticSlots[] = {
+//     200,
+//     300,
+//     450,
+//     300,
+//     200,
+//     0, 0, 0, ..., 0,
+//  }
+// 
+// When doing the positive we would pass in 
+//  valley = 200 (programmaticSlot[0]), finger = 300 (programmaticSlots[1])
+//  valley = 450 (programmaticSlot[2]), finger = 300 (programmaticSlots[3])
+//  valley = 200 (programmaticSlot[4]), finger = 200 (programmaticSlots[0])
+//    (If the end of the piece of wood is reached before wrapping around 
+//       then the wrap around doesn't matter.)
+// 
+// When doing the negative we would pass in 
+//  valley = 0 (no programmaticSlot!),  finger = 200 (programmaticSlots[0])
+//  valley = 300 (programmaticSlot[1]), finger = 450 (programmaticSlots[2])
+//  valley = 300 (programmaticSlot[3]), finger = 200 (programmaticSlots[4])
+//
+// Thus the movement through the programmaticSlots is always by 2s for 
+// a single valley and finger pair, but it is offset by one when 
+// doing the negative.  
 
  
 #include <LiquidCrystal.h>
@@ -190,7 +303,7 @@ uint16_t programmaticSlots[MAX_PROGRAMMATIC_SLOTS] = {
        0,   0,   0,   0,   0,   0,   0,   0,
        0,   0,   0,   0,   0,   0,   0,   0,
 };
-uint16_t currentProgrammaticSlot = 0;
+uint16_t programmaticIndex = 0;
 uint16_t slop = 2;
 
 // Computed based on the current options.  Set in determineMovementValues.
@@ -199,6 +312,9 @@ uint16_t initialDTMValley;
 uint16_t initialDTMFinger;
 uint16_t subDTMValley;
 uint16_t subDTMFinger;
+
+uint16_t currentFingerSize;
+uint16_t currentValleySize;
 
 uint16_t distanceRemainingToCut = 0;
 uint16_t distanceRemainingToMove = 0;
@@ -211,7 +327,7 @@ uint16_t motorSpeed = 100;
 uint32_t lengthOfWood = 4000;
 uint16_t numberOfSlots = 6;
 
-// Initiali the LCD.  Pin numbers in the below match the earlier comments.
+// Initialize the LCD.  Pin numbers in the below match the earlier comments.
 LiquidCrystal lcd(12, 11, 5, 4, 3, 2);
 
 // Creating characters for display is pretty straightforward.
@@ -386,13 +502,18 @@ void writeSettings() {
   delay(1000);
 }
 
-void determineMovementValues( uint16_t slotSize ) {
-  // See comments at the top of the file.
-  initialDTMValley  =  slotSize     +  slop    + 0;  
-  initialDTMFinger  =  slotSize     + -slop    + kerf; 
+void determineMovementValues( uint16_t valleySize, uint16_t fingerSize ) {
+  // Put the valley and finger sizes in a global variable for the 
+  // display to easily access.
+  currentValleySize = valleySize;
+  currentFingerSize = fingerSize;
 
-  subDTMValley      =  slotSize     +  slop    + -kerf;
-  subDTMFinger      =  slotSize     + -slop    + kerf;
+  // See comments at the top of the file.
+  initialDTMValley  =  valleySize   +  slop    + 0;  
+  initialDTMFinger  =  fingerSize   + -slop    + kerf; 
+
+  subDTMValley      =  valleySize   +  slop    + -kerf;
+  subDTMFinger      =  fingerSize   + -slop    + kerf;
 }
 
 
@@ -707,30 +828,30 @@ void showCutTypeMenu() {
     );
   }
 
-  if (isLeftButtonPressed() ) { 
+  if (isLeftButtonPressed() ) {   // Positive
     refreshDisplay = true;
     waitForLeftButtonRelease();
     state = CUT_MENU;
     if (isUniformCut) { 
-      determineMovementValues(uniformSlot);
+      determineMovementValues(uniformSlot, uniformSlot);
     } else {
-      currentProgrammaticSlot = 0;
-      determineMovementValues(programmaticSlots[0]);
+      programmaticIndex = 1;
+      determineMovementValues(programmaticSlots[0], programmaticSlots[1]);
     }
     setupForCut(true);
   } else if (isDownButtonPressed()) { 
     refreshDisplay = true;
     waitForDownButtonRelease();
     state = MAIN_MENU;
-  } else if (isRightButtonPressed() ) { 
+  } else if (isRightButtonPressed() ) {  // Negative
     refreshDisplay = true;
     waitForRightButtonRelease();
     state = CUT_MENU;
     if (isUniformCut) { 
-      determineMovementValues(uniformSlot);
+      determineMovementValues(uniformSlot, uniformSlot);
     } else {
-      currentProgrammaticSlot = 0;
-      determineMovementValues(programmaticSlots[0]);
+      programmaticIndex = 0;
+      determineMovementValues(0, programmaticSlots[0]);
     }
     setupForCut(false);
   }
@@ -854,6 +975,16 @@ uint16_t d() {
 }
 
 
+uint16_t getNextProgrammaticSlotSize() {
+  programmaticIndex = programmaticIndex + 1;
+  if (programmaticIndex >= MAX_PROGRAMMATIC_SLOTS ||
+      programmaticSlots[programmaticIndex] == 0) { 
+    Serial.println("Reached the end of the programmatic slots!");
+    programmaticIndex = 0;
+  }
+  return programmaticSlots[programmaticIndex];
+}
+
 void showCutMenu() {
   if (refreshDisplay) {
     refreshDisplay = false;
@@ -864,13 +995,15 @@ void showCutMenu() {
     lcd.print("|   |___+");
 
     // Show the slot size as "([d])" on the user interface.
-    char distanceMessage[10];
+    char distanceMessage[12];
     if (isUniformCut) { 
       snprintf(distanceMessage, 6, "(%d)", uniformSlot);
       lcd.setCursor(14,2);
     } else {
-      snprintf(distanceMessage, 10, "(%d,%d)", currentProgrammaticSlot, programmaticSlots[currentProgrammaticSlot] );
-      lcd.setCursor(11,2);
+      snprintf(distanceMessage, 12, "(%d,%d)", 
+        currentValleySize,
+        currentFingerSize);
+      lcd.setCursor(9,2);
     } 
     lcd.print(distanceMessage);
 
@@ -917,15 +1050,13 @@ void showCutMenu() {
       Serial.println(distanceRemainingToMove);
       moveStepper(distanceRemainingToMove, 1);
 
-      // Jason :: TODO:  This needs to be confirmed!!
       if (!isUniformCut) { 
-        currentProgrammaticSlot = currentProgrammaticSlot + 1;
-        if (currentProgrammaticSlot >= MAX_PROGRAMMATIC_SLOTS ||
-            programmaticSlots[currentProgrammaticSlot] == 0) { 
-          Serial.println("Reached the end of the programmatic slots!");
-          currentProgrammaticSlot = 0;
-        }
-        determineMovementValues(programmaticSlots[currentProgrammaticSlot]);
+        uint16_t valleySize = getNextProgrammaticSlotSize();
+        uint16_t fingerSize = getNextProgrammaticSlotSize();
+
+        determineMovementValues(
+          valleySize, 
+          fingerSize);
       }
 
       distanceRemainingToCut = subDTMValley;
@@ -962,4 +1093,3 @@ void loop() {
     showCutTypeMenu();
   }
 }
-
