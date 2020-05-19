@@ -54,7 +54,7 @@
 //  The Finger Joints look like this:
 //
 //        "Negative"              "Positive"
-//    isCutFirst = False     isCutFirst = True
+//    isCutFirst = False      isCutFirst = True
 //    +------------------+    +---------------+
 //    |     WOOD         |    |     WOOD      |
 //    |                  |    |               |
