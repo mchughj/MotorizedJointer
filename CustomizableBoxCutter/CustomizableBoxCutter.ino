@@ -228,7 +228,7 @@
 //    |                 |    |               |
 //    |                 |    |               |
 //    |                 |    |               |
-//    | 450             |    |   450         |
+//    | 500             |    |   500         |
 //    |                 |    |               |
 //    |                 |    |               |
 //    |         +-------+    |               |
@@ -248,7 +248,7 @@
 //  programmaticSlots[] = {
 //     200,
 //     300,
-//     450,
+//     500,
 //     300,
 //     200,
 //     0, 0, 0, ..., 0,
@@ -256,14 +256,14 @@
 // 
 // When doing the positive we would pass in 
 //  valley = 200 (programmaticSlot[0]), finger = 300 (programmaticSlots[1])
-//  valley = 450 (programmaticSlot[2]), finger = 300 (programmaticSlots[3])
+//  valley = 500 (programmaticSlot[2]), finger = 300 (programmaticSlots[3])
 //  valley = 200 (programmaticSlot[4]), finger = 200 (programmaticSlots[0])
 //    (If the end of the piece of wood is reached before wrapping around 
 //       then the wrap around doesn't matter.)
 // 
 // When doing the negative we would pass in 
 //  valley = 0 (no programmaticSlot!),  finger = 200 (programmaticSlots[0])
-//  valley = 300 (programmaticSlot[1]), finger = 450 (programmaticSlots[2])
+//  valley = 300 (programmaticSlot[1]), finger = 500 (programmaticSlots[2])
 //  valley = 300 (programmaticSlot[3]), finger = 200 (programmaticSlots[4])
 //
 // Thus the movement through the programmaticSlots is always by 2s for 
@@ -281,6 +281,9 @@
 #define STEP_PIN 10
 #define DIRECTION_PIN 9
 #define MOTOR_ENABLE_PIN A0
+#define MOTOR_MS1_PIN A3
+#define MOTOR_MS2_PIN A4
+#define MOTOR_MS3_PIN A5
 
 // All units are in thousands of an inch.
 // So, for example, 125 = 0.125"
@@ -289,7 +292,7 @@
 uint16_t kerf = 123;
 
 // Default movement can be less than the kerf of the blade if you want overlapping cuts.
-uint16_t maxAdvance = 120;
+uint16_t maxAdvance = 100;
 
 #define MAX_PROGRAMMATIC_SLOTS 64
 uint16_t uniformSlot;
@@ -304,7 +307,7 @@ uint16_t programmaticSlots[MAX_PROGRAMMATIC_SLOTS] = {
        0,   0,   0,   0,   0,   0,   0,   0,
 };
 uint16_t programmaticIndex = 0;
-uint16_t slop = 2;
+uint16_t slop = 1;
 
 // Computed based on the current options.  Set in determineMovementValues.
 // DTM == Distance To Move.
@@ -321,7 +324,7 @@ uint16_t distanceRemainingToMove = 0;
 
 // Default speed for movement.  This is in microseconds and captures the amount of time
 // to wait inbetween low and high pulses.  A larger number indicates slower speed.
-uint16_t motorSpeed = 100;
+uint16_t motorSpeed = 500;
 
 // Default length of wood and number of slots.
 uint32_t lengthOfWood = 4000;
@@ -418,13 +421,13 @@ bool moveStepper(uint16_t thousDistance, bool isLeft) {
   }
 
   // The number of steps per thousandths of an inch
-  unsigned long int stepsPerThou = 4;
-  unsigned long int numberOfSteps = (unsigned long int) (((unsigned long int) thousDistance) * stepsPerThou );
-  Serial.print("moveStepper; inches: " );
+  float stepsPerThou = 4.19;
+  unsigned long int numberOfSteps = ceil(( ( (unsigned long int) thousDistance) * stepsPerThou ));
+  Serial.print(F("moveStepper; inches: " ));
   Serial.print(thousDistance);
-  Serial.print(", isLeft: " );
+  Serial.print(F(", isLeft: " ));
   Serial.print(isLeft);
-  Serial.print(", numberOfSteps: " );
+  Serial.print(F(", numberOfSteps: " ));
   Serial.println(numberOfSteps);
   for( unsigned long int i = 0; i < numberOfSteps; i++ ) { 
     stepMotor();
@@ -450,19 +453,19 @@ void drawThumbUp() {
 void writeSettings() {
   uint8_t kerfInByte = (uint8_t) kerf;
 
-  Serial.print( "going to writeSettings; kerf: ");
+  Serial.print( F("going to writeSettings; kerf: "));
   Serial.print(kerf);
-  Serial.print( ", motorSpeed: ");
+  Serial.print( F(", motorSpeed: "));
   Serial.print(motorSpeed);
-  Serial.print( ", slop: ");
+  Serial.print( F(", slop: "));
   Serial.print(slop);
-  Serial.print( ", lengthOfWood: ");
+  Serial.print( F(", lengthOfWood: "));
   Serial.print(lengthOfWood);
-  Serial.print( ", numberOfSlots: ");
+  Serial.print( F(", numberOfSlots: "));
   Serial.print(numberOfSlots);
-  Serial.print( ", maxAdvance: ");
+  Serial.print( F(", maxAdvance: "));
   Serial.print(maxAdvance);
-  Serial.print( ", uniformSlot: ");
+  Serial.print( F(", uniformSlot: "));
   Serial.println(uniformSlot);
   
   EEPROM.write(0, byte(215));
@@ -487,15 +490,15 @@ void writeSettings() {
     EEPROM.write(16 + (i*2), byte(programmaticSlots[i] % 256));
   }
 
-  Serial.print( "Programmatic slots, maxLength: ");
+  Serial.print( F("Programmatic slots, maxLength: "));
   Serial.print( MAX_PROGRAMMATIC_SLOTS );
   for( int i=0; i < MAX_PROGRAMMATIC_SLOTS; i++ ) { 
-    Serial.print( ", S" );
+    Serial.print( F(", S" ));
     Serial.print( i );
-    Serial.print( ": ");
+    Serial.print( F(": "));
     Serial.print(programmaticSlots[i]);
   }
-  Serial.println("!");
+  Serial.println( F("!"));
 
   lcd.setCursor(1, 1);
   lcd.print("Saved settings");
@@ -538,25 +541,25 @@ void readSettings() {
     programmaticSlots[i] = s;
   }
 
-  Serial.print( "read in the settings; kerf: ");
+  Serial.print( F("read in the settings; kerf: "));
   Serial.print(kerf);
-  Serial.print( ", motorSpeed: ");
+  Serial.print( F(", motorSpeed: "));
   Serial.print(motorSpeed);
-  Serial.print( ", slop: ");
+  Serial.print( F(", slop: "));
   Serial.print(slop);
-  Serial.print( ", lengthOfWood: ");
+  Serial.print( F(", lengthOfWood: "));
   Serial.print(lengthOfWood);
-  Serial.print( ", numberOfSlots: ");
+  Serial.print( F(", numberOfSlots: "));
   Serial.print(numberOfSlots);
-  Serial.print( ", maxAdvance: ");
+  Serial.print( F(", maxAdvance: "));
   Serial.print(maxAdvance);
-  Serial.print( ", uniformSlot: ");
+  Serial.print( F(", uniformSlot: "));
   Serial.print(uniformSlot);
 
   for( int i=0; i < MAX_PROGRAMMATIC_SLOTS; i++ ) { 
-    Serial.print( ", S" );
+    Serial.print( F(", S" ));
     Serial.print( i );
-    Serial.print( ": ");
+    Serial.print( F(": "));
     Serial.print(programmaticSlots[i]);
   }
   Serial.println("!");
@@ -577,6 +580,13 @@ void setup() {
 
   pinMode( MOTOR_ENABLE_PIN, OUTPUT );
 
+  pinMode( MOTOR_MS1_PIN, OUTPUT);
+  pinMode( MOTOR_MS2_PIN, OUTPUT);
+  pinMode( MOTOR_MS3_PIN, OUTPUT);
+  digitalWrite( MOTOR_MS1_PIN, HIGH ); 
+  digitalWrite( MOTOR_MS2_PIN, HIGH );
+  digitalWrite( MOTOR_MS3_PIN, HIGH );
+  
   lcd.begin(20, 4);
   registerThumbUp();
 
@@ -715,10 +725,10 @@ void showConfigMenu() {
     lcd.clear();  
     showCentered("Config Menu", 0);
 
-    char statusMessage[20];
-    snprintf(statusMessage, 20, "Set %s", configOptions[configOption]);
+    char configVar[20];
+    snprintf(configVar, 20, "Set %s", configOptions[configOption]);
     showOptions( 
-       statusMessage,  /* Left - This is the 'I want to change this option' button */
+       configVar,      /* Left - Shows config variable to change */
        "Next",         /* Bottom */
        "Back",         /* Right */
        "Prior",        /* Up */
@@ -832,6 +842,8 @@ void showCutTypeMenu() {
     refreshDisplay = true;
     waitForLeftButtonRelease();
     state = CUT_MENU;
+    Serial.println("Going to begin a positive cut");
+    
     if (isUniformCut) { 
       determineMovementValues(uniformSlot, uniformSlot);
     } else {
@@ -847,6 +859,8 @@ void showCutTypeMenu() {
     refreshDisplay = true;
     waitForRightButtonRelease();
     state = CUT_MENU;
+    Serial.println("Going to begin a negative cut");
+
     if (isUniformCut) { 
       determineMovementValues(uniformSlot, uniformSlot);
     } else {
@@ -856,6 +870,7 @@ void showCutTypeMenu() {
     setupForCut(false);
   }
 }
+
 
 void showConfigChangeValueMenu() {
   if (refreshDisplay) {
@@ -957,16 +972,16 @@ void showConfigChangeValueMenu() {
 
 
 uint16_t d() {
-  Serial.print( "computing d; distanceRemainingToCut: ");
+  Serial.print( F("computing d; distanceRemainingToCut: "));
   Serial.print( distanceRemainingToCut );
-  Serial.print( ", distanceRemainingToMove: ");
+  Serial.print( F(", distanceRemainingToMove: "));
   Serial.print( distanceRemainingToMove );
-  Serial.print( ", kerf: " );
+  Serial.print( F(", kerf: " ));
   Serial.print( kerf );
-  Serial.print( ", maxAdvance: " );
+  Serial.print( F(", maxAdvance: " ));
   Serial.println( maxAdvance );
   if (distanceRemainingToCut > maxAdvance) { 
-    Serial.println("Returning Kerf" );
+    Serial.println("Returning max advance." );
     return maxAdvance;
   } else {
     Serial.println("Less to cut!  Returning distanceRemainingToCut!" );
@@ -1046,11 +1061,12 @@ void showCutMenu() {
     refreshDisplay = true;
     waitForRightButtonRelease();
     if (distanceRemainingToCut == 0) { 
-      Serial.print( "At cusp of next - moving forward big: "); 
+      Serial.print( F("At cusp of next - moving forward big: "));
       Serial.println(distanceRemainingToMove);
       moveStepper(distanceRemainingToMove, 1);
 
       if (!isUniformCut) { 
+        Serial.print( F("Doing programmatic cut so getting next valley and finger size"));
         uint16_t valleySize = getNextProgrammaticSlotSize();
         uint16_t fingerSize = getNextProgrammaticSlotSize();
 
@@ -1061,13 +1077,13 @@ void showCutMenu() {
 
       distanceRemainingToCut = subDTMValley;
       distanceRemainingToMove = subDTMFinger;
-      Serial.print( "Done;  new distanceRemainingToCut: "); 
+      Serial.print( F("Done;  new distanceRemainingToCut: "));
       Serial.println(distanceRemainingToCut);
     } else {  
       uint16_t m = d();
-      Serial.print( "doing a cut pass;  distanceRemainingToCut: " );
+      Serial.print( F("doing a cut pass;  distanceRemainingToCut: " ));
       Serial.print( distanceRemainingToCut );
-      Serial.print( ", d: " );
+      Serial.print( F(", d: " ));
       Serial.println(m);
       distanceRemainingToCut -= m;
       moveStepper(m, 1);
